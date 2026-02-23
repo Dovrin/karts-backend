@@ -15,54 +15,55 @@
 
 using json = nlohmann::json;
 
-// --- CONFIGURATION ---
-const std::string FILE_EVENTS = "events.json";
-const std::string FILE_ANNOUNCEMENTS = "announcements.json";
-const std::string FILE_USERS = "users.json";
+// --- STEP 1: SUSTAINABILITY CONFIG (SUPABASE) ---
+// We read these from Environment Variables set in Render.com
+std::string get_env_var(const char* key, const std::string& default_val = "") {
+    const char* val = std::getenv(key);
+    return val ? std::string(val) : default_val;
+}
 
-// --- HELPERS ---
-void initialize_files() {
-    auto setup_file = [](const std::string& filename, const json& default_val) {
-        std::ifstream f(filename);
-        if (!f.good()) {
-            std::ofstream of(filename);
-            of << default_val.dump(4);
-            std::cout << "[Init] Created " << filename << std::endl;
-        }
+// These will be configured in the Render Dashboard
+std::string SUPABASE_URL = get_env_var("SUPABASE_URL"); 
+std::string SUPABASE_KEY = get_env_var("SUPABASE_KEY");
+
+// Helper to make requests to Supabase Cloud
+std::string call_supabase(const std::string& table, const std::string& method = "GET", const std::string& body = "", const std::string& query = "") {
+    // Example: https://xyz.supabase.co/rest/v1/events
+    std::string host = SUPABASE_URL;
+    if (host.find("https://") == 0) host.erase(0, 8);
+    
+    httplib::Client cli(host);
+    cli.enable_server_certificate_verification(false); // For school project simplicity
+
+    httplib::Headers headers = {
+        {"apikey", SUPABASE_KEY},
+        {"Authorization", "Bearer " + SUPABASE_KEY},
+        {"Content-Type", "application/json"},
+        {"Prefer", "return=representation"}
     };
 
-    setup_file(FILE_EVENTS, json::array());
-    setup_file(FILE_ANNOUNCEMENTS, json::array());
-    
-    // Default admin user
-    json default_users = json::array({
-        {{"username", "admin"}, {"password", "admin123"}, {"role", "admin"}}
-    });
-    setup_file(FILE_USERS, default_users);
-}
+    httplib::Result res;
+    std::string path = "/rest/v1/" + table + query;
 
-json read_json(const std::string& filename) {
-    std::ifstream file(filename);
-    if (!file.is_open()) return json::array();
-    json j;
-    file >> j;
-    return j;
-}
+    if (method == "GET") res = cli.Get(path.c_str(), headers);
+    else if (method == "POST") res = cli.Post(path.c_str(), headers, body, "application/json");
+    else if (method == "DELETE") res = cli.Delete(path.c_str(), headers);
 
-void write_json(const std::string& filename, const json& j) {
-    std::ofstream file(filename);
-    file << j.dump(4);
+    if (res && res->status >= 200 && res->status < 300) {
+        return res->body;
+    }
+    std::cerr << "Supabase Error: " << (res ? std::to_string(res->status) : "Connection Failed") << " on " << path << std::endl;
+    return "[]";
 }
 
 int main() {
-    initialize_files();
     httplib::Server svr;
 
     // --- CORS HANDLER ---
     svr.set_pre_routing_handler([](const httplib::Request& req, httplib::Response& res) {
         res.set_header("Access-Control-Allow-Origin", "*");
         res.set_header("Access-Control-Allow-Methods", "POST, GET, PUT, DELETE, OPTIONS");
-        res.set_header("Access-Control-Allow-Headers", "Content-Type");
+        res.set_header("Access-Control-Allow-Headers", "Content-Type, apikey, Authorization");
         if (req.method == "OPTIONS") {
             res.status = 204;
             return httplib::Server::HandlerResponse::Handled;
@@ -70,102 +71,62 @@ int main() {
         return httplib::Server::HandlerResponse::Unhandled;
     });
 
-    // --- AUTH ---
+    // --- STEP 2: LOGIN (STILL LOCAL/SIMPLE) ---
     svr.Post("/api/login", [](const httplib::Request& req, httplib::Response& res) {
         try {
             auto j_req = json::parse(req.body);
-            std::string user = j_req.value("username", "");
-            std::string pass = j_req.value("password", "");
-
-            json users = read_json(FILE_USERS);
-            for (auto& u : users) {
-                if (u["username"] == user && u["password"] == pass) {
-                    json response = {{"status", "success"}, {"token", "token_" + user}, {"role", u["role"]}};
-                    res.set_content(response.dump(), "application/json");
-                    return;
-                }
+            if (j_req["username"] == "admin" && j_req["password"] == "admin123") {
+                json response = {{"status", "success"}, {"token", "secure_token"}, {"role", "admin"}};
+                res.set_content(response.dump(), "application/json");
+            } else {
+                res.status = 401;
+                res.set_content("{\"status\":\"error\",\"message\":\"Wrong admin password\"}", "application/json");
             }
-            res.status = 401;
-            res.set_content("{\"status\":\"error\",\"message\":\"Invalid credentials\"}", "application/json");
         } catch (...) {
             res.status = 400;
-            res.set_content("{\"status\":\"error\",\"message\":\"Bad Request\"}", "application/json");
         }
     });
 
-    // --- EVENTS ---
+    // --- STEP 3: EVENTS (FROM SUPABASE) ---
     svr.Get("/api/events", [](const httplib::Request& req, httplib::Response& res) {
-        res.set_content(read_json(FILE_EVENTS).dump(), "application/json");
+        std::string data = call_supabase("events", "GET");
+        res.set_content(data, "application/json");
     });
 
     svr.Post("/api/events", [](const httplib::Request& req, httplib::Response& res) {
-        try {
-            auto new_event = json::parse(req.body);
-            new_event["id"] = (int)time(NULL);
-            auto data = read_json(FILE_EVENTS);
-            data.push_back(new_event);
-            write_json(FILE_EVENTS, data);
-            res.set_content("{\"status\":\"success\"}", "application/json");
-        } catch (...) {
-            res.status = 400;
-            res.set_content("{\"status\":\"error\"}", "application/json");
-        }
+        std::string data = call_supabase("events", "POST", req.body);
+        res.set_content("{\"status\":\"success\"}", "application/json");
     });
 
     svr.Delete(R"(/api/events/(\d+))", [](const httplib::Request& req, httplib::Response& res) {
-        int id = std::stoi(req.matches[1]);
-        auto data = read_json(FILE_EVENTS);
-        auto it = std::remove_if(data.begin(), data.end(), [&](const json& item) { return item["id"] == id; });
-        if (it != data.end()) {
-            data.erase(it, data.end());
-            write_json(FILE_EVENTS, data);
-            res.set_content("{\"status\":\"success\"}", "application/json");
-        } else {
-            res.status = 404;
-            res.set_content("{\"status\":\"error\"}", "application/json");
-        }
+        std::string id = req.matches[1];
+        call_supabase("events", "DELETE", "", "?id=eq." + id);
+        res.set_content("{\"status\":\"success\"}", "application/json");
     });
 
-    // --- ANNOUNCEMENTS ---
+    // --- STEP 4: ANNOUNCEMENTS (FROM SUPABASE) ---
     svr.Get("/api/announcements", [](const httplib::Request& req, httplib::Response& res) {
-        res.set_content(read_json(FILE_ANNOUNCEMENTS).dump(), "application/json");
+        std::string data = call_supabase("announcements", "GET");
+        res.set_content(data, "application/json");
     });
 
     svr.Post("/api/announcements", [](const httplib::Request& req, httplib::Response& res) {
-        try {
-            auto new_ann = json::parse(req.body);
-            new_ann["id"] = (int)time(NULL);
-            auto data = read_json(FILE_ANNOUNCEMENTS);
-            data.push_back(new_ann);
-            write_json(FILE_ANNOUNCEMENTS, data);
-            res.set_content("{\"status\":\"success\"}", "application/json");
-        } catch (...) {
-            res.status = 400;
-            res.set_content("{\"status\":\"error\"}", "application/json");
-        }
+        std::string data = call_supabase("announcements", "POST", req.body);
+        res.set_content("{\"status\":\"success\"}", "application/json");
     });
 
     svr.Delete(R"(/api/announcements/(\d+))", [](const httplib::Request& req, httplib::Response& res) {
-        int id = std::stoi(req.matches[1]);
-        auto data = read_json(FILE_ANNOUNCEMENTS);
-        auto it = std::remove_if(data.begin(), data.end(), [&](const json& item) { return item["id"] == id; });
-        if (it != data.end()) {
-            data.erase(it, data.end());
-            write_json(FILE_ANNOUNCEMENTS, data);
-            res.set_content("{\"status\":\"success\"}", "application/json");
-        } else {
-            res.status = 404;
-            res.set_content("{\"status\":\"error\"}", "application/json");
-        }
+        std::string id = req.matches[1];
+        call_supabase("announcements", "DELETE", "", "?id=eq." + id);
+        res.set_content("{\"status\":\"success\"}", "application/json");
     });
 
     // --- START SERVER ---
     int port = 8080;
-    if (const char* env_p = std::getenv("PORT")) {
-        port = std::stoi(env_p);
-    }
+    const char* port_env = std::getenv("PORT");
+    if (port_env) port = std::stoi(port_env);
 
-    std::cout << "Server starting on port " << port << std::endl;
+    std::cout << "C++ Sustainable Server Bridge Running on Port " << port << std::endl;
     svr.listen("0.0.0.0", port);
     return 0;
 }

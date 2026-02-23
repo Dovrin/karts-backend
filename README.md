@@ -8,6 +8,12 @@ This is the C++ backend for the Calendar & Announcement Real-Time System (CARTS)
 - REST API for events, announcements, and admin login.
 - Render.com and Docker ready.
 
+## 🌍 Environment Variables (For Sustainability)
+To keep data persistent across restarts, this C++ backend connects to Supabase Cloud. Set these in your Render Environment:
+- `SUPABASE_URL`: Your Supabase Project URL.
+- `SUPABASE_KEY`: Your Supabase Anon Key.
+- `PORT`: (Managed by Render)
+
 ## 🛠️ Setup
 1. **Prerequisites**: C++ Compiler (GCC/Clang) and CMake.
 2. **Build**:
