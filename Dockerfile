@@ -3,7 +3,7 @@ FROM debian:bullseye-slim AS build
 RUN apt-get update && apt-get install -y g++ make cmake libssl-dev
 WORKDIR /app
 COPY . .
-# We define CPPHTTPLIB_OPENSSL_SUPPORT and link ssl/crypto for HTTPS
+# Linking order is extremely important for g++
 RUN g++ -O3 main.cc -o carts-server -DCPPHTTPLIB_OPENSSL_SUPPORT -lpthread -lssl -lcrypto
 
 # Run stage
