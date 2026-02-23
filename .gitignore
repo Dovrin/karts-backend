@@ -1,0 +1,16 @@
+# Common
+node_modules/
+build/
+bin/
+*.exe
+*.o
+*.obj
+*.suo
+*.sln
+.vscode/
+.DS_Store
+
+# Data (Don't push your local DB to Github)
+events.json
+announcements.json
+users.json
