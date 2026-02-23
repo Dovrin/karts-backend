@@ -7,10 +7,13 @@
 #include <iostream>
 #include <fstream>
 #include <string>
-#include <vector>
-#include <cstdlib>
-#include <ctime>
 #include <algorithm>
+
+// --- SSL COMPATIBILITY FIX ---
+#ifndef SSL_get1_peer_certificate
+#define SSL_get1_peer_certificate SSL_get_peer_certificate
+#endif
+
 #include "httplib.h"
 #include "json.hpp"
 
