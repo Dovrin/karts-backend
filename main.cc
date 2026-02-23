@@ -10,6 +10,7 @@
 #include <vector>
 #include <cstdlib>
 #include <ctime>
+#include <algorithm>
 #include "httplib.h"
 #include "json.hpp"
 
